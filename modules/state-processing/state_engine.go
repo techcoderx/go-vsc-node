@@ -419,33 +419,7 @@ func (se *StateEngine) ProcessBlock(block hive_blocks.HiveBlock) {
 			//# End parsing block
 
 			//# Start parsing system transactions
-			if cj.Id == "vsc.create_contract" {
-				for idx, auth := range txSelf.RequiredAuths {
-					txSelf.RequiredAuths[idx] = "hive:" + auth
-				}
-
-				for idx, auth := range txSelf.RequiredPostingAuths {
-					txSelf.RequiredPostingAuths[idx] = "hive:" + auth
-				}
-
-				parsedTx := TxCreateContract{
-					Self: txSelf,
-				}
-				json.Unmarshal(cj.Json, &parsedTx)
-
-				txResult := parsedTx.ExecuteTx(se, session, nil, nil, "")
-				if !txResult.Success {
-					session.Revert()
-				} else {
-					ledgerIds := session.Done()
-					se.TxOutput[tx.TransactionID] = TxOutput{
-						Ok:        true,
-						LedgerIds: ledgerIds,
-					}
-					se.TxOutIds = append(se.TxOutIds, tx.TransactionID)
-				}
-				continue
-			} else if cj.Id == "vsc.election_result" {
+			if cj.Id == "vsc.election_result" {
 				parsedTx := &TxElectionResult{
 					Self: txSelf,
 				}
@@ -653,6 +627,12 @@ func (se *StateEngine) ProcessBlock(block hive_blocks.HiveBlock) {
 
 					json.Unmarshal(cj.Json, &parsedTx)
 
+					vscTx = &parsedTx
+				} else if cj.Id == "vsc.create_contract" {
+					parsedTx := TxCreateContract{
+						Self: txSelf,
+					}
+					json.Unmarshal(cj.Json, &parsedTx)
 					vscTx = &parsedTx
 				}
 

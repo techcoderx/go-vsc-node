@@ -126,21 +126,23 @@ func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSess
 		}
 	}
 
-	res := ledgerSession.ExecuteTransfer(ledgerSystem.OpLogEvent{
-		Id:          MakeTxId(tx.Self.TxId, tx.Self.OpIndex),
-		From:        tx.Self.RequiredAuths[0],
-		To:          common.DAO_WALLET,
-		Amount:      common.CONTRACT_DEPLOYMENT_FEE,
-		Asset:       "hbd",
-		Type:        "transfer",
-		BlockHeight: tx.Self.BlockHeight,
-		BIdx:        int64(tx.Self.Index),
-		OpIdx:       int64(tx.Self.OpIndex),
-	})
-	if !res.Ok {
-		return TxResult{
-			Success: false,
-			Ret:     res.Msg,
+	if tx.Self.BlockHeight >= common.CONTRACT_DEPLOYMENT_FEE_START_HEIGHT {
+		res := ledgerSession.ExecuteTransfer(ledgerSystem.OpLogEvent{
+			Id:          MakeTxId(tx.Self.TxId, tx.Self.OpIndex),
+			From:        tx.Self.RequiredAuths[0],
+			To:          common.DAO_WALLET,
+			Amount:      common.CONTRACT_DEPLOYMENT_FEE,
+			Asset:       "hbd",
+			Type:        "transfer",
+			BlockHeight: tx.Self.BlockHeight,
+			BIdx:        int64(tx.Self.Index),
+			OpIdx:       int64(tx.Self.OpIndex),
+		})
+		if !res.Ok {
+			return TxResult{
+				Success: false,
+				Ret:     res.Msg,
+			}
 		}
 	}
 
