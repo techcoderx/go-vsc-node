@@ -437,7 +437,12 @@ func (se *StateEngine) ProcessBlock(block hive_blocks.HiveBlock) {
 				if !txResult.Success {
 					session.Revert()
 				} else {
-					session.Done()
+					ledgerIds := session.Done()
+					se.TxOutput[tx.TransactionID] = TxOutput{
+						Ok:        true,
+						LedgerIds: ledgerIds,
+					}
+					se.TxOutIds = append(se.TxOutIds, tx.TransactionID)
 				}
 				continue
 			} else if cj.Id == "vsc.election_result" {
