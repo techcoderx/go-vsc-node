@@ -533,8 +533,8 @@ func (b *BlsCircuit) IncludedDIDs() []BlsDID {
 // SerializedCircuit contains Signature plus Bitvector
 // Include MembershipMap when reconstructing
 type SerializedCircuit struct {
-	Signature string `json:"sig"`
-	BitVector string `json:"bv"`
+	Signature string `json:"sig" bson:"sig"`
+	BitVector string `json:"bv" bson:"bv"`
 }
 
 // serialize the BLS circuit, including the bit vector

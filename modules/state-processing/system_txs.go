@@ -3,7 +3,7 @@ package stateEngine
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
+	"testing"
 	"vsc-node/lib/datalayer"
 	"vsc-node/lib/dids"
 	"vsc-node/modules/common"
@@ -110,12 +110,18 @@ const CONTRACT_DATA_AVAILABLITY_PROOF_REQUIRED_HEIGHT = 84162592
 
 // ProcessTx implements VSCTransaction.
 func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSession, rcSession *rcSystem.RcSession, contractSession *contract_session.ContractSession, rcPayer string) TxResult {
-
-	fmt.Println("tx.Runtime", tx.Runtime)
+	if !testing.Testing() && tx.NetId != common.NETWORK_ID {
+		return TxResult{
+			Success: false,
+			Ret:     "invalid network id",
+			RcUsed:  10,
+		}
+	}
 	if wasm_runtime.NewFromString(tx.Runtime.String()).IsErr() {
 		return TxResult{
 			Success: false,
 			Ret:     "runtime name is invalid",
+			RcUsed:  10,
 		}
 	}
 
@@ -123,10 +129,11 @@ func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSess
 		return TxResult{
 			Success: false,
 			Ret:     "cannot create contract with posting auths",
+			RcUsed:  10,
 		}
 	}
 
-	if tx.Self.BlockHeight >= common.CONTRACT_DEPLOYMENT_FEE_START_HEIGHT {
+	if testing.Testing() || tx.Self.BlockHeight >= common.CONTRACT_DEPLOYMENT_FEE_START_HEIGHT {
 		res := ledgerSession.ExecuteTransfer(ledgerSystem.OpLogEvent{
 			Id:          MakeTxId(tx.Self.TxId, tx.Self.OpIndex),
 			From:        tx.Self.RequiredAuths[0],
@@ -142,6 +149,7 @@ func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSess
 			return TxResult{
 				Success: false,
 				Ret:     res.Msg,
+				RcUsed:  10,
 			}
 		}
 	}
@@ -162,6 +170,7 @@ func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSess
 		return TxResult{
 			Success: false,
 			Ret:     "invalid storage proof",
+			RcUsed:  10,
 		}
 	}
 
@@ -173,45 +182,15 @@ func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSess
 
 	id := common.ContractId(tx.Self.TxId, tx.Self.OpIndex)
 
-	var owner string
-	if tx.Owner == "" {
-		owner = tx.Self.RequiredAuths[0]
-	} else {
-		owner = tx.Owner
-		if !strings.HasPrefix(owner, "hive:") && !strings.HasPrefix(owner, "did:") {
-			owner = "hive:" + owner
-		}
-	}
-
-	se.contractDb.RegisterContract(id, contracts.Contract{
-		Code:           tx.Code,
-		Name:           tx.Name,
-		Description:    tx.Description,
-		Creator:        tx.Self.RequiredAuths[0],
-		Owner:          owner,
-		TxId:           tx.Self.TxId,
-		CreationHeight: tx.Self.BlockHeight,
-		Runtime:        tx.Runtime,
-	})
-
-	// dd := map[string]interface{}{
-	// 	"bytes": []byte("HELLO WORLD LOLLL"),
-	// }
-	// dagCbor, _ := dagCbor.WrapObject(dd, mh.SHA2_256, -2)
-
-	// cid2, _ := se.da.PutObject(dd)
-	// bbytes, _ := dagCbor.MarshalJSON()
-	// fmt.Println("GDAGCBOR TEST", string(bbytes), cid2)
-
 	return TxResult{
 		Success: true,
+		Ret:     id,
+		RcUsed:  0, // no RC is imposed as deployer is paying a fee
 	}
 }
 
 func (tx *TxCreateContract) ToData() map[string]interface{} {
 	return map[string]interface{}{
-		"__v":           tx.Version,
-		"net_id":        tx.NetId,
 		"name":          tx.Name,
 		"code":          tx.Code,
 		"owner":         tx.Owner,
@@ -273,7 +252,7 @@ func (tx TxElectionResult) TxSelf() TxSelf {
 }
 
 // ProcessTx implements VSCTransaction.
-func (tx *TxElectionResult) ExecuteTx(se *StateEngine, ledgerSession *LedgerSession, rcSession *rcSystem.RcSession) {
+func (tx *TxElectionResult) ExecuteTx(se *StateEngine) {
 	// ctx := context.Background()
 	if tx.Epoch == 0 {
 		electionResult := se.electionDb.GetElection(0)

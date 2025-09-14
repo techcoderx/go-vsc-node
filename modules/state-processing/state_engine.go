@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	DataLayer "vsc-node/lib/datalayer"
 	"vsc-node/lib/dids"
 	"vsc-node/lib/logger"
@@ -22,6 +23,7 @@ import (
 	"vsc-node/modules/db/vsc/witnesses"
 	ledgerSystem "vsc-node/modules/ledger-system"
 	rcSystem "vsc-node/modules/rc-system"
+	w_runtime "vsc-node/modules/wasm/runtime"
 	wasm_runtime "vsc-node/modules/wasm/runtime_ipc"
 
 	"github.com/chebyrash/promise"
@@ -343,13 +345,6 @@ func (se *StateEngine) ProcessBlock(block hive_blocks.HiveBlock) {
 			continue
 		}
 
-		var lastblock uint64
-		vscBlock, _ := se.vscBlocks.GetBlockByHeight(blockInfo.BlockHeight)
-		if vscBlock != nil {
-			lastblock = uint64(vscBlock.EndBlock)
-		}
-
-		session := se.LedgerExecutor.NewSession(lastblock)
 		if singleOp.Type == "custom_json" {
 			// fmt.Println(op.Type)
 			opVal := singleOp.Value
@@ -424,7 +419,7 @@ func (se *StateEngine) ProcessBlock(block hive_blocks.HiveBlock) {
 					Self: txSelf,
 				}
 				json.Unmarshal(cj.Json, &parsedTx)
-				parsedTx.ExecuteTx(se, session, nil)
+				parsedTx.ExecuteTx(se)
 				continue
 			}
 			//# End parsing system transactions
@@ -761,6 +756,10 @@ func (se *StateEngine) ExecuteBatch() {
 			ContractId string
 			Output     ContractResult
 		}, 0)
+		newContracts := make([]struct {
+			ContractId string
+			Contract   contracts.Contract
+		}, 0)
 		ok := true
 		for idx, vscTx := range tx.Ops {
 			// if vscTx.Type() == "deposit" {
@@ -864,6 +863,36 @@ func (se *StateEngine) ExecuteBatch() {
 						},
 					})
 				}
+			} else if vscTx.Type() == "create_contract" {
+				if result.Success {
+					createContract := vscTx.ToData()
+					// fmt.Println("okay", okay)
+					var owner string
+					if createContract["owner"] == "" {
+						owner = vscTx.TxSelf().RequiredAuths[0]
+					} else {
+						owner = createContract["owner"].(string)
+						if !strings.HasPrefix(owner, "hive:") && !strings.HasPrefix(owner, "did:") {
+							owner = "hive:" + owner
+						}
+					}
+					newContracts = append(newContracts, struct {
+						ContractId string
+						Contract   contracts.Contract
+					}{
+						ContractId: result.Ret,
+						Contract: contracts.Contract{
+							Code:           createContract["code"].(string),
+							Name:           createContract["name"].(string),
+							Description:    createContract["description"].(string),
+							Creator:        vscTx.TxSelf().RequiredAuths[0],
+							Owner:          owner,
+							TxId:           vscTx.TxSelf().TxId,
+							CreationHeight: vscTx.TxSelf().BlockHeight,
+							Runtime:        createContract["runtime"].(w_runtime.Runtime),
+						},
+					})
+				}
 			}
 			if !result.Success {
 				se.log.Debug("TRANSACTION REVERTING")
@@ -887,6 +916,12 @@ func (se *StateEngine) ExecuteBatch() {
 			LedgerIds: ledgerIds,
 		}
 		se.TxOutIds = append(se.TxOutIds, tx.TxId)
+
+		if ok {
+			for _, c := range newContracts {
+				se.contractDb.RegisterContract(c.ContractId, c.Contract)
+			}
+		}
 	}
 
 	se.TxBatch = make([]TxPacket, 0)
