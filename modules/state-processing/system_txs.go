@@ -24,10 +24,10 @@ import (
 )
 
 type ContractOutput struct {
-	Id         string                 `json:"id"`
-	ContractId string                 `json:"contract_id"`
-	Inputs     []string               `json:"inputs"`
-	Metadata   map[string]interface{} `json:"metadata"`
+	Id         string                     `json:"id"`
+	ContractId string                     `json:"contract_id"`
+	Inputs     []string                   `json:"inputs"`
+	Metadata   contracts.ContractMetadata `json:"metadata"`
 	//This might not be used
 
 	Results     []contracts.ContractOutputResult `json:"results" bson:"results"`
@@ -109,7 +109,7 @@ func (tx TxCreateContract) TxSelf() TxSelf {
 const CONTRACT_DATA_AVAILABLITY_PROOF_REQUIRED_HEIGHT = 84162592
 
 // ProcessTx implements VSCTransaction.
-func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSession, rcSession *rcSystem.RcSession, contractSession *contract_session.ContractSession, rcPayer string) TxResult {
+func (tx *TxCreateContract) ExecuteTx(se *StateEngine, ledgerSession *LedgerSession, rcSession *rcSystem.RcSession, callSession *contract_session.CallSession, rcPayer string) TxResult {
 	if !testing.Testing() && tx.NetId != common.NETWORK_ID {
 		return TxResult{
 			Success: false,
