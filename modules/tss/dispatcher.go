@@ -112,10 +112,12 @@ func (dispatcher *ReshareDispatcher) Start() error {
 
 	fmt.Println("mem", err, len(savedKeyData))
 	if err != nil {
+		dispatcher.cleanup()
 		return err
 	}
 
 	if myParty == nil && myNewParty == nil {
+		dispatcher.cleanup()
 		return fmt.Errorf("node not part of old or new committee")
 	}
 
@@ -126,6 +128,7 @@ func (dispatcher *ReshareDispatcher) Start() error {
 
 		fmt.Println("err", err)
 		if err != nil {
+			dispatcher.cleanup()
 			return err
 		}
 
@@ -208,6 +211,7 @@ func (dispatcher *ReshareDispatcher) Start() error {
 
 		fmt.Println("err", err)
 		if err != nil {
+			dispatcher.cleanup()
 			return err
 		}
 

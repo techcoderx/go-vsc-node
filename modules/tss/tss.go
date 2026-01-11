@@ -509,7 +509,6 @@ func (tssMgr *TssManager) RunActions(actions []QueuedAction, leader string, isLe
 		if err == nil {
 			startedDispatcher = append(startedDispatcher, dispatcher)
 		} else {
-			dispatcher.Done().Await(context.Background())
 			delete(tssMgr.sigChannels, dispatcher.SessionId())
 			delete(tssMgr.actionMap, dispatcher.SessionId())
 			delete(tssMgr.sessionMap, dispatcher.SessionId())
