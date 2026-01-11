@@ -61,6 +61,9 @@ type ReshareDispatcher struct {
 }
 
 func (dispatcher *ReshareDispatcher) Start() error {
+	// Initialize context for cleanup
+	dispatcher.initContext()
+
 	sortedPids, myParty, p2pCtx := dispatcher.baseInfo()
 
 	userId := dispatcher.tssMgr.config.Get().HiveUsername
@@ -291,6 +294,10 @@ func (dispatcher *ReshareDispatcher) Done() *promise.Promise[DispatcherResult] {
 		<-dispatcher.done
 
 		fmt.Println("OKAYISH", dispatcher.timeout, dispatcher.tssErr, dispatcher.err)
+
+		// Cleanup resources
+		defer dispatcher.cleanup()
+
 		if dispatcher.timeout {
 			culprits := make(map[string]bool, 0)
 			if dispatcher.party != nil {
@@ -375,7 +382,9 @@ func (dispatcher *ReshareDispatcher) HandleP2P(input []byte, fromStr string, isB
 	}
 
 	if cmt == "both" || cmt == "old" {
+		dispatcher.wg.Add(1)
 		go func() {
+			defer dispatcher.wg.Done()
 			ok, err := dispatcher.party.UpdateFromBytes(input, from, isBrcst)
 			if err != nil {
 				fmt.Println("UpdateFromBytes", ok, err)
@@ -387,7 +396,9 @@ func (dispatcher *ReshareDispatcher) HandleP2P(input []byte, fromStr string, isB
 	}
 	if cmt == "both" || cmt == "new" {
 		if dispatcher.newParty != nil {
+			dispatcher.wg.Add(1)
 			go func() {
+				defer dispatcher.wg.Done()
 				ok, err := dispatcher.newParty.UpdateFromBytes(input, from, isBrcst)
 
 				if err != nil {
@@ -459,6 +470,8 @@ type SignDispatcher struct {
 }
 
 func (dispatcher *SignDispatcher) Start() error {
+	// Initialize context for cleanup
+	dispatcher.initContext()
 
 	sortedPids, myParty, p2pCtx := dispatcher.baseInfo()
 	if myParty == nil {
@@ -597,6 +610,9 @@ func (dispatcher *SignDispatcher) Done() *promise.Promise[DispatcherResult] {
 	return promise.New(func(resolve func(DispatcherResult), reject func(error)) {
 		<-dispatcher.done
 
+		// Cleanup resources
+		defer dispatcher.cleanup()
+
 		if dispatcher.timeout {
 			culprits := make([]string, 0)
 			for _, p := range dispatcher.party.WaitingFor() {
@@ -653,7 +669,9 @@ type BaseDispatcher struct {
 	timeout bool
 	// partyType string
 
-	done chan struct{}
+	done       chan struct{}
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 
 	keystore datastore.Datastore
 
@@ -665,57 +683,73 @@ type BaseDispatcher struct {
 	startLock sync.Mutex
 
 	lastMsg time.Time
+	wg      sync.WaitGroup
 }
 
 func (dispatcher *BaseDispatcher) handleMsgs() {
+	dispatcher.wg.Add(1)
 	go func() {
+		defer dispatcher.wg.Done()
 		for {
-			msg := <-dispatcher.p2pMsg
-
-			var commiteeType string
-			if msg.IsToOldAndNewCommittees() {
-				commiteeType = "both"
-			} else if msg.IsToOldCommittee() {
-				commiteeType = "old"
-			} else if !msg.IsToOldCommittee() {
-				commiteeType = "new"
-			}
-
-			if msg.IsBroadcast() {
-				// bcounter = bcounter + 1
-				bytes, _, err := msg.WireBytes()
-				if err != nil {
-					fmt.Println("sendMsg broadcast err: ", err)
+			select {
+			case <-dispatcher.ctx.Done():
+				fmt.Println("handleMsgs context cancelled")
+				return
+			case msg, ok := <-dispatcher.p2pMsg:
+				if !ok {
+					fmt.Println("handleMsgs channel closed")
+					return
 				}
-				for _, p := range dispatcher.participants {
-					if p.Account == dispatcher.tssMgr.config.Get().HiveUsername {
-						continue
-					}
 
-					go func() {
-						err := dispatcher.tssMgr.SendMsg(dispatcher.sessionId, p, msg.WireMsg().From.Moniker, bytes, true, commiteeType, "")
-						if err != nil {
-							fmt.Println("SendMsg direct info", err, p.Account, len(bytes))
-						}
-					}()
+				var commiteeType string
+				if msg.IsToOldAndNewCommittees() {
+					commiteeType = "both"
+				} else if msg.IsToOldCommittee() {
+					commiteeType = "old"
+				} else if !msg.IsToOldCommittee() {
+					commiteeType = "new"
 				}
-			} else {
-				for _, to := range msg.GetTo() {
+
+				if msg.IsBroadcast() {
+					// bcounter = bcounter + 1
 					bytes, _, err := msg.WireBytes()
-
 					if err != nil {
-						dispatcher.err = err
+						fmt.Println("sendMsg broadcast err: ", err)
 					}
-
-					// fmt.Println("", string(to.Id))
-					go func() {
-						err := dispatcher.tssMgr.SendMsg(dispatcher.sessionId, Participant{
-							Account: string(to.Id),
-						}, to.Moniker, bytes, false, commiteeType, "")
-						if err != nil {
-							fmt.Println("SendMsg direct info", err, string(to.Id), len(bytes))
+					for _, p := range dispatcher.participants {
+						if p.Account == dispatcher.tssMgr.config.Get().HiveUsername {
+							continue
 						}
-					}()
+
+						dispatcher.wg.Add(1)
+						go func(p Participant) {
+							defer dispatcher.wg.Done()
+							err := dispatcher.tssMgr.SendMsg(dispatcher.sessionId, p, msg.WireMsg().From.Moniker, bytes, true, commiteeType, "")
+							if err != nil {
+								fmt.Println("SendMsg direct info", err, p.Account, len(bytes))
+							}
+						}(p)
+					}
+				} else {
+					for _, to := range msg.GetTo() {
+						bytes, _, err := msg.WireBytes()
+
+						if err != nil {
+							dispatcher.err = err
+						}
+
+						// fmt.Println("", string(to.Id))
+						dispatcher.wg.Add(1)
+						go func(to *btss.PartyID) {
+							defer dispatcher.wg.Done()
+							err := dispatcher.tssMgr.SendMsg(dispatcher.sessionId, Participant{
+								Account: string(to.Id),
+							}, to.Moniker, bytes, false, commiteeType, "")
+							if err != nil {
+								fmt.Println("SendMsg direct info", err, string(to.Id), len(bytes))
+							}
+						}(to)
+					}
 				}
 			}
 		}
@@ -756,7 +790,10 @@ func (dispatcher *BaseDispatcher) HandleP2P(input []byte, fromStr string, isBrcs
 	// 	fmt.Println("Updating old", from)
 
 	// }
+
+	dispatcher.wg.Add(1)
 	go func() {
+		defer dispatcher.wg.Done()
 		ok, err := dispatcher.party.UpdateFromBytes(input, from, isBrcst)
 
 		fmt.Println("Update party", ok, len(input), from.Id, time.Now().String())
@@ -790,22 +827,59 @@ func (dsc *BaseDispatcher) KeyId() string {
 func (dispatcher *BaseDispatcher) baseStart() {
 	timeout := 1 * time.Minute
 	dispatcher.lastMsg = time.Now()
+
+	dispatcher.wg.Add(1)
 	go func() {
+		defer dispatcher.wg.Done()
 		fmt.Println("baseStart lastMsg", dispatcher.lastMsg)
 		for {
-			if time.Since(dispatcher.lastMsg) > timeout {
+			select {
+			case <-dispatcher.ctx.Done():
+				fmt.Println("baseStart context cancelled")
 				dispatcher.timeout = true
-
 				dispatcher.done <- struct{}{}
-				break
+				return
+			default:
+				if time.Since(dispatcher.lastMsg) > timeout {
+					dispatcher.timeout = true
+					dispatcher.done <- struct{}{}
+					break
+				}
+				time.Sleep(time.Millisecond)
 			}
-
-			time.Sleep(time.Millisecond)
 		}
 	}()
 
 	dispatcher.started = true
 	dispatcher.startLock.Unlock()
+}
+
+func (dispatcher *BaseDispatcher) cleanup() {
+	// Close all channels
+	if dispatcher.p2pMsg != nil {
+		close(dispatcher.p2pMsg)
+	}
+	if dispatcher.done != nil {
+		// Signal done channel if not already signaled
+		select {
+		case <-dispatcher.done:
+			// Already closed
+		default:
+			close(dispatcher.done)
+		}
+	}
+
+	// Cancel context to stop all goroutines
+	if dispatcher.cancelFunc != nil {
+		dispatcher.cancelFunc()
+	}
+
+	// Wait for all goroutines to finish
+	dispatcher.wg.Wait()
+}
+
+func (dispatcher *BaseDispatcher) initContext() {
+	dispatcher.ctx, dispatcher.cancelFunc = context.WithCancel(context.Background())
 }
 
 func (dispatcher *BaseDispatcher) baseInfo() (btss.SortedPartyIDs, *btss.PartyID, *btss.PeerContext) {
@@ -846,6 +920,9 @@ type KeyGenDispatcher struct {
 }
 
 func (dispatcher *KeyGenDispatcher) Start() error {
+	// Initialize context for cleanup
+	dispatcher.initContext()
+
 	threshold, err := tss_helpers.GetThreshold(len(dispatcher.participants))
 	threshold++
 
@@ -959,6 +1036,9 @@ func (dispatcher *KeyGenDispatcher) Start() error {
 func (dispatcher *KeyGenDispatcher) Done() *promise.Promise[DispatcherResult] {
 	return promise.New(func(resolve func(DispatcherResult), reject func(error)) {
 		<-dispatcher.done
+
+		// Cleanup resources
+		defer dispatcher.cleanup()
 
 		if dispatcher.timeout {
 			culprits := make([]string, 0)
