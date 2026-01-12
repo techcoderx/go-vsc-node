@@ -11,7 +11,6 @@ import (
 	"vsc-node/lib/logger"
 	"vsc-node/modules/aggregate"
 	"vsc-node/modules/announcements"
-	blockproducer "vsc-node/modules/block-producer"
 	"vsc-node/modules/common"
 	"vsc-node/modules/common/common_types"
 	systemconfig "vsc-node/modules/common/system-config"
@@ -140,7 +139,7 @@ func main() {
 	blockStatus = blockConsumer.BlockStatus()
 	ep := election_proposer.New(p2p, witnessesDb, electionDb, vscBlocks, balanceDb, da, &hiveCreator, identityConfig, sysConfig, se, blockConsumer)
 
-	bp := blockproducer.New(l, p2p, blockConsumer, se, identityConfig, sysConfig, &hiveCreator, da, electionDb, vscBlocks, txDb, rcSystem, nonceDb)
+	// bp := blockproducer.New(l, p2p, blockConsumer, se, identityConfig, sysConfig, &hiveCreator, da, electionDb, vscBlocks, txDb, rcSystem, nonceDb)
 	oracle := oracle.New(p2p, identityConfig, electionDb, witnessDb, blockConsumer, se)
 
 	multisig := gateway.New(l, sysConfig, witnessesDb, electionDb, actionsDb, balanceDb, &hiveCreator, blockConsumer, p2p, se, identityConfig, hiveRpcClient)
@@ -214,7 +213,7 @@ func main() {
 		//Startup main state processing pipeline
 		streamerPlugin,
 		se,
-		bp,
+		// bp,
 		oracle,
 		ep,
 		multisig,
